@@ -1,8 +1,24 @@
-streamlit==1.49.1
-ollama==0.5.3
-llama-index==0.14.0
-llama-index-llms-ollama==0.7.2
-pymongo==4.14.1
-pydantic==2.11.7
-pydantic-settings==2.10.1
-python-dotenv==1.1.1
+# Interactive Media Intelligence Dashboard - Dependencies
+# Streamlit & UI
+streamlit>=1.28.0
+streamlit-extras>=0.3.0
+Pillow>=10.0.0
+
+# AI/ML - Google Gemini
+google-generativeai>=0.3.0
+google-genai>=0.3.0
+
+# AI/ML - Groq (fast inference)
+groq>=0.4.0
+
+# Data & Storage
+pandas>=2.0.0
+numpy>=1.24.0
+python-dotenv>=1.0.0
+
+# File handling
+opencv-python-headless>=4.8.0
+moviepy>=1.0.3
+
+# Utilities
+requests>=2.31.0

@@ -96,3 +96,30 @@ def add_gallery_item(item: dict) -> str:
     items.append(item)
     save_gallery_items(items)
     return new_id
+
+
+def clear_entire_gallery() -> None:
+    """Delete all gallery items, ratings, and playlists. Start fresh."""
+    save_gallery_items([])
+    save_json(RATINGS_FILE, {})
+    save_json(PLAYLISTS_FILE, {})
+
+
+def delete_gallery_item(item_id: str) -> bool:
+    """Remove item from gallery. Also removes from ratings and playlists. Returns True if deleted."""
+    items = get_gallery_items()
+    filtered = [i for i in items if i.get("id") != item_id]
+    if len(filtered) == len(items):
+        return False
+    save_gallery_items(filtered)
+    # Clean up ratings
+    ratings = get_ratings()
+    if item_id in ratings:
+        del ratings[item_id]
+        save_json(RATINGS_FILE, ratings)
+    # Clean up playlists
+    playlists = get_playlists()
+    for name in playlists:
+        playlists[name] = [i for i in playlists[name] if i != item_id]
+    save_json(PLAYLISTS_FILE, playlists)
+    return True

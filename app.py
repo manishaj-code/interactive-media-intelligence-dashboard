@@ -21,10 +21,42 @@ from services.data_service import (
     save_playlist,
     add_to_playlist,
     add_gallery_item,
+    delete_gallery_item,
+    clear_entire_gallery,
 )
 from services.ai_service import search_semantic, get_ai_summary
+import re
 
 # Page config
+
+
+def extract_youtube_id(url: str):
+    """Extract YouTube video ID from various URL formats."""
+    if not url or not isinstance(url, str):
+        return None
+    patterns = [
+        r"(?:youtube\.com/watch\?v=)([a-zA-Z0-9_-]{11})",
+        r"(?:youtube\.com/embed/)([a-zA-Z0-9_-]{11})",
+        r"(?:youtu\.be/)([a-zA-Z0-9_-]{11})",
+    ]
+    for p in patterns:
+        m = re.search(p, url)
+        if m:
+            return m.group(1)
+    return None
+
+
+def normalize_youtube_url(url: str) -> str:
+    """Convert YouTube URL to embed format for reliable playback."""
+    vid = extract_youtube_id(url)
+    return f"https://www.youtube.com/embed/{vid}" if vid else url
+
+
+def get_youtube_thumbnail(url: str) -> str:
+    """Get YouTube thumbnail image URL from video URL."""
+    vid = extract_youtube_id(url)
+    return f"https://img.youtube.com/vi/{vid}/hqdefault.jpg" if vid else url
+
 st.set_page_config(
     page_title="Interactive Media Intelligence Dashboard",
     page_icon="🎬",
@@ -153,16 +185,38 @@ def render_sidebar():
         else:
             st.caption("No playlists yet. Create one from an item!")
         
-        # Create playlist
-        new_pl = st.text_input("Create new playlist", key="new_playlist")
-        if st.button("Create Playlist") and new_pl:
-            save_playlist(new_pl.strip(), [])
-            st.success(f"Created '{new_pl}'")
-            st.rerun()
+        # Create playlist - compact
+        with st.expander("➕ Create playlist"):
+            new_pl = st.text_input("Playlist name", key="new_playlist", label_visibility="collapsed", placeholder="Enter name...")
+            if st.button("Create", key="create_pl_btn") and new_pl:
+                save_playlist(new_pl.strip(), [])
+                st.success(f"Created '{new_pl}'")
+                st.rerun()
         
         st.divider()
-        st.markdown("### 📤 Upload")
-        st.caption("Use the upload section below")
+        st.caption("📤 Upload content in the section below")
+
+        # Gallery actions
+        with st.expander("⚙️ Gallery settings", expanded=False):
+            if st.session_state.get("confirm_clear_gallery"):
+                st.warning("Delete all items?")
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("✓ Yes, clear all", key="clear_yes"):
+                        clear_entire_gallery()
+                        st.session_state.pop("confirm_clear_gallery", None)
+                        if "selected_item" in st.session_state:
+                            del st.session_state.selected_item
+                        st.success("Gallery cleared!")
+                        st.rerun()
+                with c2:
+                    if st.button("✗ Cancel", key="clear_no"):
+                        st.session_state.pop("confirm_clear_gallery", None)
+                        st.rerun()
+            else:
+                if st.button("🗑️ Delete entire gallery", key="clear_gallery"):
+                    st.session_state["confirm_clear_gallery"] = True
+                    st.rerun()
     
     return selected_cat, selected_type, sort_by
 
@@ -192,7 +246,10 @@ def render_item_card(item, show_actions=True):
     title = item.get("title", "Untitled")
     category = item.get("category", "")
     desc = item.get("description", "")[:150] + "..." if len(item.get("description", "")) > 150 else item.get("description", "")
+    source = item.get("source", "")
     thumbnail = item.get("thumbnail", "https://picsum.photos/400/225")
+    if extract_youtube_id(source):
+        thumbnail = get_youtube_thumbnail(source) or thumbnail
     item_type = item.get("type", "video")
     actions = item.get("actions", [])
     
@@ -216,29 +273,44 @@ def render_item_card(item, show_actions=True):
                     name = a.get("name", "")
                     st.caption(f"• {name} @ {ts}")
             
-            # Actions row
-            r1, r2, r3 = st.columns(3)
-            with r1:
-                rating = st.slider("Rate", 1, 5, int(avg_rating or 3), key=f"rate_{item_id}")
-                if st.button("Save rating", key=f"save_rate_{item_id}"):
-                    save_rating(item_id, rating)
-                    st.success("Saved!")
+            # Primary action - View details (prominent)
+            if st.button("👁️ View details", key=f"view_{item_id}", use_container_width=True):
+                st.session_state.selected_item = item_id
+                st.rerun()
             
-            playlists = get_playlists()
-            with r2:
-                pl_name = st.selectbox(
-                    "Add to playlist",
-                    [""] + list(playlists.keys()),
-                    key=f"pl_{item_id}"
-                )
-                if pl_name and st.button("Add", key=f"add_pl_{item_id}"):
-                    add_to_playlist(pl_name, item_id)
-                    st.success("Added!")
-            
-            with r3:
-                if st.button("View details", key=f"view_{item_id}"):
-                    st.session_state.selected_item = item_id
-                    st.rerun()
+            # Secondary actions in expander
+            with st.expander("⚡ Rate, playlist & more"):
+                r1, r2 = st.columns(2)
+                with r1:
+                    st.caption("⭐ Rate")
+                    rating = st.slider("Stars", 1, 5, int(avg_rating or 3), key=f"rate_{item_id}", label_visibility="collapsed")
+                    if st.button("Save rating", key=f"save_rate_{item_id}", use_container_width=True):
+                        save_rating(item_id, rating)
+                        st.success("Saved!")
+                with r2:
+                    st.caption("📁 Add to playlist")
+                    playlists = get_playlists()
+                    pl_name = st.selectbox("Playlist", [""] + list(playlists.keys()), key=f"pl_{item_id}", label_visibility="collapsed")
+                    if pl_name and st.button("➕ Add", key=f"add_pl_{item_id}", use_container_width=True):
+                        add_to_playlist(pl_name, item_id)
+                        st.success("Added!")
+                st.caption("🗑️ Remove")
+                if st.session_state.get(f"confirm_delete_{item_id}"):
+                    d1, d2 = st.columns(2)
+                    with d1:
+                        if st.button("Yes, delete", key=f"confirm_del_{item_id}", use_container_width=True):
+                            if delete_gallery_item(item_id):
+                                st.session_state.pop(f"confirm_delete_{item_id}", None)
+                                st.success("Deleted!")
+                                st.rerun()
+                    with d2:
+                        if st.button("Cancel", key=f"cancel_del_{item_id}", use_container_width=True):
+                            st.session_state.pop(f"confirm_delete_{item_id}", None)
+                            st.rerun()
+                else:
+                    if st.button("🗑️ Delete", key=f"delete_{item_id}", use_container_width=True):
+                        st.session_state[f"confirm_delete_{item_id}"] = True
+                        st.rerun()
         
         st.divider()
 
@@ -251,11 +323,17 @@ def render_item_detail(item):
     
     col1, col2 = st.columns([1, 1])
     with col1:
-        st.image(item.get("thumbnail", "https://picsum.photos/800/450"), use_container_width=True)
+        source = item.get("source", "")
+        thumb = item.get("thumbnail", "https://picsum.photos/800/450")
+        if extract_youtube_id(source):
+            thumb = get_youtube_thumbnail(source) or thumb
+        st.image(thumb, use_container_width=True)
         if item.get("type") == "video":
-            st.video(item.get("source", ""))
+            video_url = normalize_youtube_url(source) if source else source
+            if video_url:
+                st.video(video_url)
         else:
-            st.image(item.get("source", item.get("thumbnail")), use_container_width=True)
+            st.image(source or thumb, use_container_width=True)
     
     with col2:
         st.markdown("### Summary")
@@ -270,17 +348,38 @@ def render_item_detail(item):
                 st.write(item["transcript"])
         
         st.markdown("### AI Summary")
-        if st.button("Generate AI summary", key="gen_summary"):
+        if st.button("🤖 Generate AI summary", key="gen_summary", use_container_width=True):
             summary = get_ai_summary(
                 item.get("description", "") + "\n" + item.get("transcript", ""),
                 "Summarize this content and highlight key moments."
             )
             st.info(summary)
     
-    if st.button("← Back to gallery"):
-        if "selected_item" in st.session_state:
-            del st.session_state.selected_item
-        st.rerun()
+    # Action buttons - organized row
+    st.markdown("---")
+    btn1, btn2, btn3 = st.columns(3)
+    with btn1:
+        if st.button("← Back to gallery", use_container_width=True):
+            if "selected_item" in st.session_state:
+                del st.session_state.selected_item
+            st.rerun()
+    with btn2:
+        if st.session_state.get("confirm_delete_detail") == item_id:
+            if st.button("✓ Yes, delete permanently", key="confirm_delete_detail_btn", use_container_width=True):
+                if delete_gallery_item(item_id):
+                    del st.session_state.selected_item
+                    st.session_state.pop("confirm_delete_detail", None)
+                    st.success("Item deleted.")
+                    st.rerun()
+        else:
+            if st.button("🗑️ Delete item", key="delete_detail", use_container_width=True):
+                st.session_state["confirm_delete_detail"] = item_id
+                st.rerun()
+    with btn3:
+        if st.session_state.get("confirm_delete_detail") == item_id:
+            if st.button("✗ Cancel", key="cancel_delete_detail", use_container_width=True):
+                st.session_state.pop("confirm_delete_detail", None)
+                st.rerun()
 
 
 def render_upload():
@@ -293,7 +392,7 @@ def render_upload():
         category = st.selectbox("Category", ["Cooking", "Fitness", "Technology", "Music", "Art", "Other"])
         content_type = st.selectbox("Type", ["video", "image"])
         description = st.text_area("Description", placeholder="Brief description")
-        url = st.text_input("Video/Image URL (YouTube embed or direct image link)", placeholder="https://...")
+        url = st.text_input("Video/Image URL (YouTube or direct link)", placeholder="https://www.youtube.com/watch?v=... or https://youtu.be/...")
         uploaded_file = st.file_uploader("Or upload a file", type=["jpg", "jpeg", "png", "gif", "mp4", "webm"], accept_multiple_files=False)
         tags = st.text_input("Tags (comma-separated)", placeholder="tag1, tag2")
         
@@ -302,8 +401,10 @@ def render_upload():
         if submitted:
             if not title or not title.strip():
                 st.error("Please enter a title.")
+            elif content_type == "video" and not uploaded_file and not (url and url.strip()):
+                st.error("For video, please enter a YouTube URL or upload a video file.")
             else:
-                source_url = url.strip() if url else ""
+                source_url = (url or "").strip()
                 thumbnail_url = source_url
                 
                 # Handle file upload
@@ -311,9 +412,17 @@ def render_upload():
                     save_path = UPLOADS_DIR / uploaded_file.name
                     with open(save_path, "wb") as f:
                         f.write(uploaded_file.getvalue())
-                    # Use relative path for local files - Streamlit can serve from data folder
                     source_url = str(save_path)
                     thumbnail_url = source_url if content_type == "image" else "https://picsum.photos/400/225"
+                # Handle YouTube URL for video
+                elif content_type == "video" and source_url and extract_youtube_id(source_url):
+                    source_url = normalize_youtube_url(source_url)
+                    thumbnail_url = get_youtube_thumbnail(source_url)
+                
+                if not source_url:
+                    source_url = "https://picsum.photos/800/600"
+                if not thumbnail_url or (content_type == "video" and extract_youtube_id(source_url)):
+                    thumbnail_url = get_youtube_thumbnail(source_url) or "https://picsum.photos/400/225"
                 
                 item = {
                     "title": title.strip(),
@@ -351,16 +460,18 @@ def main():
             render_item_detail(match)
             return
     
-    # Main content: Search
-    col_search, col_view = st.columns([3, 1])
+    # Main content: Search toolbar
+    st.markdown("#### 🔍 Search & browse")
+    col_search, col_view, col_upload = st.columns([4, 1, 1])
     with col_search:
         query = st.text_input(
-            "🔍 Search actions, topics, or keywords",
+            "Search",
             placeholder="e.g., cooking pasta, HIIT workout, guitar chords...",
-            key="search_query"
+            key="search_query",
+            label_visibility="collapsed"
         )
     with col_view:
-        view_mode = st.radio("View", ["grid", "list"], horizontal=True, key="view_mode")
+        view_mode = st.radio("View", ["grid", "list"], format_func=lambda x: "🔲 Grid" if x == "grid" else "📋 List", horizontal=True, key="view_mode", label_visibility="collapsed")
     
     # Filter and sort
     items = get_gallery_items()
